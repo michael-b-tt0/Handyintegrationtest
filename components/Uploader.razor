@@ -1,0 +1,179 @@
+
+@inject HttpClient Httpclient
+@inject IJSRuntime JSRuntime
+
+
+<div class="card boundry">
+    <div class="card-body">
+        <div class="drop-zone @(isDragging ? "drag-over" : "")" @ref="dropZoneRef">
+            <p>Drag and drop a .funscript file here or click to select</p>
+            <InputFile OnChange="@SelectFile" accept=".funscript" class="form-control" disabled="@isProcessingFile" />
+        </div>
+        @if (isProcessingFile)
+        {
+            <div class="d-flex justify-content-center align-items-center mb-3">
+                <div class="spinner-border spinner-border-sm me-2" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <span>Processing funscript file...</span>
+            </div>
+        }
+        @if (file != null || droppedFileName != null)
+        {
+            if (errorMessage == null)
+            {
+                <div class="mb-3">
+                    <strong>File Name:</strong>
+                    @(file?.Name ?? droppedFileName)
+                </div>
+                <div>
+                    <strong>File Size:</strong>
+                    @(file?.Size.ToString("N0") ?? droppedFileSize.ToString("N0")) bytes
+                </div>
+                
+                    @* <div>
+        <strong>Number of action
+        groups:</strong>
+        @funscript.GetactionGroupscount().ToString()
+        </div> *@
+
+                }
+
+            }
+            else
+            {
+                <p class="text-danger">@errorMessage</p>
+            }
+        }
+    </div>
+</div>
+
+@code {
+
+    IBrowserFile? file;
+    int MAXFILESIZE = 1500000;
+    string? errorMessage;
+    bool isProcessingFile = false;
+    bool isDragging = false;
+    string? droppedFileName;
+    long droppedFileSize;
+
+    ElementReference dropZoneRef;
+
+    [Parameter]
+    public EventCallback<string> OnFunscriptUploaded { get; set; }   
+
+    
+
+    public async Task SelectFile(InputFileChangeEventArgs e)
+    {
+        file = e.File;
+        droppedFileName = null;
+        droppedFileSize = 0;
+        
+        errorMessage = null;
+        isProcessingFile = true;
+        StateHasChanged();
+
+        // Read the file stream once at the beginning to avoid stream exhaustion
+        byte[] fileBytes;
+        try
+        {
+            using var stream = file.OpenReadStream(MAXFILESIZE);
+            fileBytes = new byte[stream.Length];
+            await stream.ReadAsync(fileBytes, 0, (int)stream.Length);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error reading file: {ex.Message}";
+            isProcessingFile = false;
+            StateHasChanged();
+            return;
+        }
+
+        await ProcessFile(file.Name, fileBytes, file.Size);
+    }
+
+    private async Task ProcessFile(string fileName, byte[] fileBytes, long fileSize)
+    {
+        errorMessage = null;
+
+        // Check file extension
+        if (!System.IO.Path.GetExtension(fileName).Equals(".funscript", StringComparison.OrdinalIgnoreCase))
+        {
+            errorMessage = "Please select a .funscript file only.";
+            isProcessingFile = false;
+            StateHasChanged();
+            return;
+        }
+
+        if (fileSize >= MAXFILESIZE)
+        {
+            errorMessage = "file too large";
+            isProcessingFile = false;
+            StateHasChanged();
+            return;
+        }
+
+
+        var json = System.Text.Encoding.UTF8.GetString(fileBytes);
+        if (OnFunscriptUploaded.HasDelegate)
+        {
+            await OnFunscriptUploaded.InvokeAsync(json);
+        }
+
+        isProcessingFile = false;
+        StateHasChanged();
+        
+       
+        
+    }
+
+
+    
+
+
+    
+
+    [JSInvokable]
+    public async Task ProcessDroppedFile(string fileName, string base64Data)
+    {
+        file = null; // Reset for dropped file
+        droppedFileName = fileName;
+        byte[] bytes = Convert.FromBase64String(base64Data);
+        droppedFileSize = bytes.Length;
+        errorMessage = null;
+
+        await ProcessFile(fileName, bytes, bytes.Length);
+    }
+
+    [JSInvokable]
+    public async Task OnDragEnter()
+    {
+        isDragging = true;
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public async Task OnDragLeave()
+    {
+        isDragging = false;
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public async Task OnDropStart()
+    {
+        isProcessingFile = true;
+        StateHasChanged();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JSRuntime.InvokeVoidAsync("setupDropZone", dropZoneRef, DotNetObjectReference.Create(this));
+        }
+    }
+
+}

@@ -1,0 +1,348 @@
+@page "/handy-connect"
+@using System
+@using System.Threading.Tasks
+@using handyapiv3.Abstractions
+@using handyapiv3.Models
+@implements IDisposable
+@inject IHandyService Handy
+
+<PageTitle>Handy Connect</PageTitle>
+
+<h1>Handy Connect</h1>
+
+<div class="mb-3">
+    <label for="connectionKey" class="form-label">Connection Key</label>
+    <div class="input-group">
+        <input type="text" id="connectionKey" class="form-control" @bind="connectionKey" placeholder="Enter your Handy connection key" />
+        <button class="btn btn-primary" @onclick="Connect" disabled="@isConnecting">
+            @if (isConnecting)
+            {
+                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                <span>Connecting...</span>
+            }
+            else
+            {
+                <span>Connect</span>
+            }
+        </button>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger mt-3">@error</div>
+}
+
+@if (Handy.Connected)
+{
+    <div class="alert alert-success mt-3">Connected successfully!</div>
+    <Uploader OnFunscriptUploaded="HandleFunscriptUploaded" />
+    
+    @if (!string.IsNullOrEmpty(setupMessage))
+    {
+        <div class="alert alert-info mt-3">@setupMessage</div>
+    }
+
+    <div class="mt-3 mb-3 btn-group">
+        <button class="btn btn-secondary" @onclick="CheckHsspState">HSSP State</button>
+        <button class="btn btn-secondary" @onclick="CheckConnected">Connected Status</button>
+        <button class="btn btn-secondary" @onclick="CheckMode">Current Mode</button>
+        <button class="btn btn-secondary" @onclick="CheckSliderStroke">Slider Stroke</button>
+    </div>
+
+    <div class="mt-3 mb-3 btn-group">
+        <button class="btn btn-success" @onclick="PlayHssp">Play HSSP</button>
+        <button class="btn btn-warning" @onclick="PauseHssp">Pause HSSP</button>
+        <button class="btn btn-danger" @onclick="StopHssp">Stop HSSP</button>
+    </div>
+
+    <div class="mt-3 mb-3">
+        <label for="modeSelect" class="form-label">Set Device Mode</label>
+        <div class="input-group">
+            <select id="modeSelect" class="form-select" @bind="selectedMode">
+                @foreach (var mode in Enum.GetValues<HandyMode>())
+                {
+                    <option value="@mode">@mode</option>
+                }
+            </select>
+            <button class="btn btn-primary" @onclick="SetMode">Set Mode</button>
+        </div>
+    </div>
+
+    @if (Handy.Info != null)
+    {
+        <div class="card mt-3">
+            <div class="card-header">Device Info</div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-3">Hardware Version</dt>
+                    <dd class="col-sm-9">@(Handy.Info.HardwareModelName ?? "Unknown") (No. @Handy.Info.HardwareModelNo, Variant @Handy.Info.HardwareModelVariant)</dd>
+                    
+                    <dt class="col-sm-3">Firmware Version</dt>
+                    <dd class="col-sm-9">@Handy.Info.FirmwareVersion</dd>
+
+                    <dt class="col-sm-3">Firmware Status</dt>
+                    <dd class="col-sm-9">@Handy.Info.FirmwareStatus</dd>
+                </dl>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private string? connectionKey;
+    private string? error;
+    private string? setupMessage;
+    private bool isConnecting;
+    public string connectionurl = "https://discuss.eroscripts.com/uploads/short-url/3lhnbVnreYnZSm5ACQGGf1LWID5.funscript";
+    private HandyMode selectedMode = HandyMode.Idle;
+
+    protected override void OnInitialized()
+    {
+        Handy.StateChanged += OnHandyStateChanged;
+    }
+
+    private async Task Connect()
+    {
+        if (string.IsNullOrWhiteSpace(connectionKey))
+        {
+            error = "Please enter a connection key.";
+            return;
+        }
+
+        error = null;
+        isConnecting = true;
+        
+        try
+        {
+            Handy.SetConnectionKey(connectionKey.Trim());
+            await Handy.GetInfoAsync();
+            
+            // Connected status is updated on success internally within the service
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isConnecting = false;
+        }
+    }
+
+    private async Task HandleFunscriptUploaded(string jsonContent)
+    {
+        try
+        {
+            error = null;
+            setupMessage = "Sending funscript to Handy...";
+            StateHasChanged();
+            
+            using var doc = System.Text.Json.JsonDocument.Parse(jsonContent);
+            if (!doc.RootElement.TryGetProperty("actions", out var actionsElement))
+            {
+                throw new Exception("Invalid funscript: missing 'actions' property.");
+            }
+            
+            var sb = new System.Text.StringBuilder();
+            foreach (var action in actionsElement.EnumerateArray())
+            {
+                if (action.TryGetProperty("at", out var atElement) &&
+                    action.TryGetProperty("pos", out var posElement))
+                {
+                    sb.AppendLine($"{atElement.GetInt64()},{posElement.GetInt32()}");
+                }
+            }
+
+            var csvContent = sb.ToString();
+            Console.WriteLine($"Parsed {actionsElement.GetArrayLength()} actions to CSV");
+
+            var response = await Handy.SetupHsspFromUrlAsync("https://sweettecheu.s3.eu-central-1.amazonaws.com/scripts/admin/dataset.csv");
+            setupMessage = $"Handy setup successful. PlayState: {response.PlayState}, Points: {response.Points}";
+        }
+        catch (Exception ex)
+        {
+            error = $"Setup failed: {ex.Message}";
+            setupMessage = null;
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private async Task CheckHsspState()
+    {
+        try
+        {
+            error = null;
+            setupMessage = "Fetching HSSP State...";
+            StateHasChanged();
+            
+            var response = await Handy.GetHsspStateAsync();
+            setupMessage = $"HSSP State: PlayState={response.PlayState}, Points={response.Points}, CurrentPoint={response.CurrentPoint}, CurrentTime={response.CurrentTime}";
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to get HSSP State: {ex.Message}";
+            setupMessage = null;
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private async Task PlayHssp()
+    {
+        try
+        {
+            error = null;
+            setupMessage = "Playing HSSP...";
+            StateHasChanged();
+            
+            var response = await Handy.PlayHsspAsync(0);
+            setupMessage = $"HSSP Playing. PlayState: {response.PlayState}";
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to play HSSP: {ex.Message}";
+            setupMessage = null;
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private async Task PauseHssp()
+    {
+        try
+        {
+            error = null;
+            setupMessage = "Pausing HSSP...";
+            StateHasChanged();
+            
+            var response = await Handy.StopHsspAsync();
+            setupMessage = $"HSSP Paused. PlayState: {response.PlayState}";
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to pause HSSP: {ex.Message}";
+            setupMessage = null;
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private async Task StopHssp()
+    {
+        try
+        {
+            error = null;
+            setupMessage = "Stopping HSSP...";
+            StateHasChanged();
+            
+            var response = await Handy.StopHsspAsync();
+            setupMessage = $"HSSP Stopped. PlayState: {response.PlayState}";
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to stop HSSP: {ex.Message}";
+            setupMessage = null;
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private async Task CheckConnected()
+    {
+        try
+        {
+            error = null;
+            var isConn = await Handy.GetConnectedAsync();
+            setupMessage = $"Connected Status: {isConn}";
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to get connected status: {ex.Message}";
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private async Task CheckMode()
+    {
+        try
+        {
+            error = null;
+            var mode = await Handy.GetModeAsync();
+            setupMessage = $"Current Mode: {mode}";
+            selectedMode = mode; // keep selected UI in sync
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to get mode: {ex.Message}";
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private async Task SetMode()
+    {
+        try
+        {
+            error = null;
+            setupMessage = "Setting mode...";
+            StateHasChanged();
+            
+            var response = await Handy.SetModeAsync(selectedMode);
+            setupMessage = $"Successfully set mode to: {(HandyMode)response.Mode}";
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to set mode: {ex.Message}";
+            setupMessage = null;
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private async Task CheckSliderStroke()
+    {
+        try
+        {
+            error = null;
+            var stroke = await Handy.GetSliderStrokeAsync();
+            setupMessage = $"Slider Stroke: Min={stroke.Min}%, Max={stroke.Max}%";
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to get slider stroke: {ex.Message}";
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private void OnHandyStateChanged(object? sender, EventArgs e)
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Handy.StateChanged -= OnHandyStateChanged;
+    }
+}

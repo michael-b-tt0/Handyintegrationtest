@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="../../class librarys/handyapiv3/handyapiv3.csproj" />
+  <Project Path="Handyintegrationtest.csproj" />
+</Solution>
