@@ -48,6 +48,7 @@
         <button class="btn btn-secondary" @onclick="CheckConnected">Connected Status</button>
         <button class="btn btn-secondary" @onclick="CheckMode">Current Mode</button>
         <button class="btn btn-secondary" @onclick="CheckSliderStroke">Slider Stroke</button>
+        <button class="btn btn-secondary" @onclick="Sendscvfunscript">Send link to csv funscript</button>
     </div>
 
     <div class="mt-3 mb-3 btn-group">
@@ -94,7 +95,9 @@
     private string? error;
     private string? setupMessage;
     private bool isConnecting;
-    public string connectionurl = "https://discuss.eroscripts.com/uploads/short-url/3lhnbVnreYnZSm5ACQGGf1LWID5.funscript";
+
+    private string funscriptUrl = "https://sweettecheu.s3.eu-central-1.amazonaws.com/scripts/admin/dataset.csv";
+    
     private HandyMode selectedMode = HandyMode.Idle;
 
     protected override void OnInitialized()
@@ -130,46 +133,72 @@
         }
     }
 
-    private async Task HandleFunscriptUploaded(string jsonContent)
-    {
+    private async Task Sendscvfunscript(){
+
         try
         {
             error = null;
-            setupMessage = "Sending funscript to Handy...";
+            setupMessage = "Fetching funscript from URL...";
             StateHasChanged();
-            
-            using var doc = System.Text.Json.JsonDocument.Parse(jsonContent);
-            if (!doc.RootElement.TryGetProperty("actions", out var actionsElement))
-            {
-                throw new Exception("Invalid funscript: missing 'actions' property.");
-            }
-            
-            var sb = new System.Text.StringBuilder();
-            foreach (var action in actionsElement.EnumerateArray())
-            {
-                if (action.TryGetProperty("at", out var atElement) &&
-                    action.TryGetProperty("pos", out var posElement))
-                {
-                    sb.AppendLine($"{atElement.GetInt64()},{posElement.GetInt32()}");
-                }
-            }
-
-            var csvContent = sb.ToString();
-            Console.WriteLine($"Parsed {actionsElement.GetArrayLength()} actions to CSV");
-
-            var response = await Handy.SetupHsspFromUrlAsync("https://sweettecheu.s3.eu-central-1.amazonaws.com/scripts/admin/dataset.csv");
+            var response = await Handy.SetupHsspFromUrlAsync(funscriptUrl);
             setupMessage = $"Handy setup successful. PlayState: {response.PlayState}, Points: {response.Points}";
+
+            
         }
         catch (Exception ex)
         {
-            error = $"Setup failed: {ex.Message}";
+            error = $"Failed to fetch or send funscript: {ex.Message}";
             setupMessage = null;
+            
         }
         finally
         {
             StateHasChanged();
         }
+
     }
+
+    private async Task HandleFunscriptUploaded(string jsonContent)
+{
+    try
+    {
+        error = null;
+        setupMessage = "Sending funscript to Handy...";
+        StateHasChanged();
+
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonContent);
+        if (!doc.RootElement.TryGetProperty("actions", out var actionsElement))
+            throw new Exception("Invalid funscript: missing 'actions' property.");
+
+        // Convert to CSV format: "at,pos\n" per line — this is what the API reliably accepts
+       var sb = new System.Text.StringBuilder();
+sb.Append("{\"type\":\"handy\"},\n");  // two-column header, trailing comma matters
+foreach (var action in actionsElement.EnumerateArray())
+{
+    if (action.TryGetProperty("at", out var at) &&
+        action.TryGetProperty("pos", out var pos))
+    {
+        sb.Append(at.GetInt64());
+        sb.Append(',');
+        sb.Append(pos.GetInt32());
+        sb.Append('\n');
+    }
+}
+Console.WriteLine("CSV to send to API:");
+Console.WriteLine(sb.ToString());
+var response = await Handy.SetupHsspFromCsvAsync(sb.ToString());
+        setupMessage = $"Handy setup successful. PlayState: {response.PlayState}, Points: {response.Points}";
+    }
+    catch (Exception ex)
+    {
+        error = $"Setup failed: {ex.Message}";
+        setupMessage = null;
+    }
+    finally
+    {
+        StateHasChanged();
+    }
+}
 
     private async Task CheckHsspState()
     {
