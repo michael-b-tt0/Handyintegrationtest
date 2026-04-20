@@ -1,0 +1,175 @@
+@page "/Vrtest"
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<PageTitle>WebXR Test</PageTitle>
+
+<section class="vrtest-shell">
+    <div class="vrtest-copy">
+        <p class="vrtest-eyebrow">WebXR</p>
+        <h1>VR test page</h1>
+        <p class="vrtest-description">
+            This page uses direct JavaScript interop to detect browser support, start an
+            <code>immersive-vr</code> session, and present a simple WebXR render loop.
+        </p>
+
+        <div class="vrtest-actions">
+            <button class="btn btn-primary" @onclick="EnterVrAsync" disabled="@EnterVrDisabled">
+                @EnterVrButtonText
+            </button>
+            <button class="btn btn-outline-secondary" @onclick="ExitVrAsync" disabled="@(!_isSessionActive)">
+                Exit VR
+            </button>
+        </div>
+
+        <p class="vrtest-status">@_statusMessage</p>
+    </div>
+
+    <div class="vrtest-canvas-frame">
+        <canvas id="@CanvasId" width="1280" height="720"></canvas>
+    </div>
+</section>
+
+<style>
+    .vrtest-shell {
+        display: grid;
+        gap: 1.5rem;
+        align-items: start;
+    }
+
+    .vrtest-copy {
+        max-width: 42rem;
+    }
+
+    .vrtest-eyebrow {
+        margin: 0 0 0.4rem;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #0f766e;
+    }
+
+    .vrtest-description {
+        color: #475569;
+        max-width: 40rem;
+    }
+
+    .vrtest-actions {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin: 1.25rem 0 0.75rem;
+    }
+
+    .vrtest-status {
+        margin: 0;
+        min-height: 1.5rem;
+        color: #334155;
+    }
+
+    .vrtest-canvas-frame {
+        position: relative;
+        overflow: hidden;
+        border-radius: 1rem;
+        border: 1px solid #cbd5e1;
+        background:
+            radial-gradient(circle at top, rgba(34, 197, 94, 0.24), transparent 45%),
+            linear-gradient(180deg, #082f49 0%, #020617 100%);
+        box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+    }
+
+    .vrtest-canvas-frame canvas {
+        display: block;
+        width: 100%;
+        height: min(70vh, 42rem);
+    }
+
+    @@media (max-width: 768px) {
+        .vrtest-canvas-frame canvas {
+            height: 50vh;
+        }
+    }
+</style>
+
+@code {
+    private const string CanvasId = "vrtest-webxr-canvas";
+
+    private DotNetObjectReference<Vrtest>? _dotNetReference;
+    private bool _isSecureContext;
+    private bool _isVrSupported;
+    private bool _isSessionActive;
+    private bool _isEnteringVr;
+    private bool _isInitialized;
+    private string _statusMessage = "Checking WebXR support...";
+
+    private bool EnterVrDisabled => !_isInitialized || !_isSecureContext || !_isVrSupported || _isSessionActive || _isEnteringVr;
+
+    private string EnterVrButtonText =>
+        _isEnteringVr ? "Entering VR..." :
+        _isSessionActive ? "VR active" :
+        "Enter VR";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        _dotNetReference = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("webxrInterop.initialize", CanvasId, _dotNetReference);
+    }
+
+    private async Task EnterVrAsync()
+    {
+        if (EnterVrDisabled)
+        {
+            return;
+        }
+
+        _isEnteringVr = true;
+        _statusMessage = "Requesting immersive VR session...";
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            await JS.InvokeVoidAsync("webxrInterop.enterVr", CanvasId);
+        }
+        finally
+        {
+            _isEnteringVr = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task ExitVrAsync()
+    {
+        await JS.InvokeVoidAsync("webxrInterop.exitVr", CanvasId);
+    }
+
+    [JSInvokable]
+    public Task UpdateState(bool isSupported, bool isSecureContext, bool isSessionActive, string status)
+    {
+        _isInitialized = true;
+        _isVrSupported = isSupported;
+        _isSecureContext = isSecureContext;
+        _isSessionActive = isSessionActive;
+        _statusMessage = status;
+
+        return InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("webxrInterop.dispose", CanvasId);
+        }
+        catch
+        {
+        }
+
+        _dotNetReference?.Dispose();
+    }
+}

@@ -61,7 +61,7 @@
     ElementReference dropZoneRef;
 
     [Parameter]
-    public EventCallback<string> OnFunscriptUploaded { get; set; }   
+    public EventCallback<FunscriptUploadPayload> OnFunscriptUploaded { get; set; }   
 
     
 
@@ -119,7 +119,11 @@
         var json = System.Text.Encoding.UTF8.GetString(fileBytes);
         if (OnFunscriptUploaded.HasDelegate)
         {
-            await OnFunscriptUploaded.InvokeAsync(json);
+            await OnFunscriptUploaded.InvokeAsync(new FunscriptUploadPayload
+            {
+                FileName = fileName,
+                Content = json,
+            });
         }
 
         isProcessingFile = false;
